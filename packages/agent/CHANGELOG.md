@@ -10,7 +10,6 @@
 ### Added
 
 - Added bounded `Session.findEntriesOnBranch()` and `findEntryOnBranch()` queries with explicit traversal, filtering, ordering, and limit options.
-- Added tool-owned system-prompt snippets and usage guidance to `AgentHarnessTool` metadata ([#7396](https://github.com/earendil-works/pi/pull/7396)).
 
 ## [0.83.0] - 2026-07-29
 
