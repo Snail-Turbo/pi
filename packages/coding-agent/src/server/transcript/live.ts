@@ -59,17 +59,12 @@ function projectToolProgressResult(value: unknown): ProjectedToolResult {
 }
 
 export class LiveTranscript {
-	private readonly onPhase: (phase: "idle" | "turn") => void;
 	private readonly listeners = new Set<(event: PiSessionRuntimeEvent) => void>();
 	private readonly liveItems = new Map<string, TranscriptItem>();
 	private readonly liveOrder: string[] = [];
 	private readonly toolInputs = new Map<string, { call: ToolCall; input: JsonValue; timestamp: number }>();
 	private queuedSteerItems: ReturnType<typeof projectUserMessage>[] = [];
 	revision = 0;
-
-	constructor(onPhase: (phase: "idle" | "turn") => void) {
-		this.onPhase = onPhase;
-	}
 
 	get queuedSteer(): ReturnType<typeof projectUserMessage>[] {
 		return structuredClone(this.queuedSteerItems);
@@ -106,8 +101,6 @@ export class LiveTranscript {
 	}
 
 	handle(event: AgentHarnessEvent): void {
-		if (event.type === "agent_start") this.onPhase("turn");
-		if (event.type === "agent_end" || event.type === "settled") this.onPhase("idle");
 		if (event.type === "message_start") {
 			this.handleMessageStart(event.message);
 			return;

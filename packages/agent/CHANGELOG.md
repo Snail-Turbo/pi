@@ -11,6 +11,8 @@
 
 - Added bounded `Session.findEntriesOnBranch()` and `findEntryOnBranch()` queries with explicit traversal, filtering, ordering, and limit options.
 
+- Added explicit inherited environment-variable removal to harness shell execution patches.
+
 ## [0.83.0] - 2026-07-29
 
 ## [0.82.1] - 2026-07-25

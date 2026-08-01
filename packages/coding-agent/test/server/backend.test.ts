@@ -1,6 +1,7 @@
+import { rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInMemorySessionStore, createReadTool, createSessionRepository } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { TranscriptProgress } from "@earendil-works/pi-protocol";
 import { describe, expect, test } from "vitest";
 import { CodingAgentServerBackend, toPiServerError } from "../../src/server/backend.ts";
@@ -215,6 +216,72 @@ describe("coding-agent server backend", () => {
 			expect(await runtime.snapshot()).toMatchObject({ id: "memory-session", cwd: fixture.cwd });
 		} finally {
 			await runtime.dispose();
+			await removeServerBackendFixture(fixture);
+		}
+	});
+
+	test("accepts a session cwd that is a symlink to a directory", async () => {
+		const fixture = await createServerBackendFixture();
+		const linkedCwd = join(fixture.root, "linked-workspace");
+		await symlink(fixture.cwd, linkedCwd, "dir");
+		const runtime = await fixture.backend.createSession({ id: "symlink-cwd", cwd: linkedCwd });
+		try {
+			expect(await runtime.snapshot()).toMatchObject({ cwd: linkedCwd });
+		} finally {
+			await runtime.dispose();
+			await removeServerBackendFixture(fixture);
+		}
+	});
+
+	test("rejects a persisted cwd that is no longer a directory", async () => {
+		const fixture = await createServerBackendFixture();
+		const runtime = await fixture.backend.createSession({ id: "invalid-persisted-cwd", cwd: fixture.cwd });
+		await runtime.dispose();
+		await rm(fixture.cwd, { recursive: true });
+		await writeFile(fixture.cwd, "not a directory");
+		try {
+			await expect(fixture.backend.openSession("invalid-persisted-cwd")).rejects.toMatchObject({
+				code: "invalid_request",
+				message: expect.stringContaining("Invalid session cwd"),
+			});
+		} finally {
+			await removeServerBackendFixture(fixture);
+		}
+	});
+
+	test("removes inherited PI_SESSION_FILE for non-file-backed sessions", async () => {
+		const fixture = await createServerBackendFixture();
+		const sessionRepository = createSessionRepository({ store: createInMemorySessionStore() });
+		const backend = await CodingAgentServerBackend.create({
+			defaultCwd: fixture.cwd,
+			modelRuntime: fixture.modelRuntime,
+			settingsManager: fixture.settingsManager,
+			sessionRepository,
+			createSessionOptions: ({ id }) => ({ id }),
+			lockRoot: join(fixture.root, "environment-locks"),
+		});
+		const previousSessionFile = process.env.PI_SESSION_FILE;
+		process.env.PI_SESSION_FILE = "inherited-session.jsonl";
+		const runtime = await backend.createSession({
+			id: "memory-environment",
+			cwd: fixture.cwd,
+			model: { provider: fixture.faux.provider.id, id: "faux-reasoning" },
+		});
+		try {
+			fixture.faux.setResponses([
+				fauxAssistantMessage(fauxToolCall("bash", { command: `printf '%s' "\${PI_SESSION_FILE-unset}"` }), {
+					stopReason: "toolUse",
+				}),
+				fauxAssistantMessage("done"),
+			]);
+			await runtime.prompt({ text: "inspect environment" });
+			const tool = (await runtime.snapshot()).transcript.find((item) => item.role === "tool");
+			if (!tool || tool.role !== "tool") throw new Error("Expected tool transcript item");
+			expect(tool.content).toContainEqual({ type: "text", text: "unset" });
+		} finally {
+			await runtime.dispose();
+			if (previousSessionFile === undefined) delete process.env.PI_SESSION_FILE;
+			else process.env.PI_SESSION_FILE = previousSessionFile;
 			await removeServerBackendFixture(fixture);
 		}
 	});

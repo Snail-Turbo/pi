@@ -236,15 +236,15 @@ async function getShellConfig(customShellPath?: string): Promise<Result<ShellCon
 
 function getShellEnv(
 	baseEnv?: NodeJS.ProcessEnv,
-	extraEnv?: Record<string, string>,
+	extraEnv?: Record<string, string | undefined>,
 	inheritEnv = true,
 ): NodeJS.ProcessEnv {
-	if (!inheritEnv) return { ...extraEnv };
-	return {
-		...process.env,
-		...baseEnv,
-		...extraEnv,
-	};
+	const env = inheritEnv ? { ...process.env, ...baseEnv } : {};
+	for (const [name, value] of Object.entries(extraEnv ?? {})) {
+		if (value === undefined) delete env[name];
+		else env[name] = value;
+	}
+	return env;
 }
 
 function killProcessTree(pid: number): void {

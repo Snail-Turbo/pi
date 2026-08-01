@@ -242,6 +242,7 @@ export class CodingAgentServerBackend<
 			const session = await this.sessions.open(metadata);
 			const { state } = await inspectServerSession(session);
 			if (!state.cwd) throw new PiServerError("invalid_request", `Session ${sessionId} has no saved cwd`);
+			await validateCwd(state.cwd);
 			if (!state.model) throw new PiServerError("invalid_request", `Session ${sessionId} has no saved model`);
 			if (state.invalidThinkingLevel !== undefined) {
 				throw new PiServerError(
@@ -283,7 +284,11 @@ async function validateCwd(cwd: string): Promise<void> {
 	if (!isAbsolute(cwd)) throw new PiServerError("invalid_request", `Session cwd must be absolute: ${cwd}`);
 	const env = new NodeExecutionEnv({ cwd });
 	try {
-		const info = await env.fileInfo(cwd);
+		const canonical = await env.canonicalPath(cwd);
+		if (!canonical.ok) {
+			throw new PiServerError("invalid_request", `Invalid session cwd ${cwd}: ${canonical.error.message}`);
+		}
+		const info = await env.fileInfo(canonical.value);
 		if (!info.ok || info.value.kind !== "directory") {
 			const suffix = info.ok ? "is not a directory" : info.error.message;
 			throw new PiServerError("invalid_request", `Invalid session cwd ${cwd}: ${suffix}`);

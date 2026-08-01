@@ -353,8 +353,8 @@ export interface FileSystem {
 export interface ShellExecOptions {
 	/** Working directory for the command. Relative paths are resolved against {@link ExecutionEnv.cwd}. Defaults to {@link ExecutionEnv.cwd}. */
 	cwd?: string;
-	/** Environment variables for the command. Values override inherited defaults when `inheritEnv` is true. */
-	env?: Record<string, string>;
+	/** Environment variable patch for the command. Strings override inherited defaults; `undefined` removes a variable. */
+	env?: Record<string, string | undefined>;
 	/** Whether to inherit the execution environment's default variables. Defaults to true. */
 	inheritEnv?: boolean;
 	/** Timeout in seconds. Implementations should return a timeout error when the command exceeds this duration. Defaults to no timeout. */

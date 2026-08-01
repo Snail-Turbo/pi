@@ -43,9 +43,7 @@ export class CodingAgentSessionRuntime implements PiSessionRuntime {
 	private readonly env: NodeExecutionEnv;
 	private readonly lease: SessionLease;
 	private readonly harness: AgentHarness<ExecutionToolContext>;
-	private readonly liveTranscript = new LiveTranscript((phase) => {
-		this.phase = phase;
-	});
+	private readonly liveTranscript = new LiveTranscript();
 	private readonly unsubscribeHarness: () => void;
 	private readonly unsubscribeLockCompromise: () => void;
 	private lockCompromise?: Error;

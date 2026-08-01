@@ -38,7 +38,8 @@ export function createServerHarness(options: CreateServerHarnessOptions): AgentH
 			options.assertUsable();
 			const metadata = await options.session.getMetadata();
 			execution.env.PI_SESSION_ID = metadata.id;
-			if ("path" in metadata && typeof metadata.path === "string") execution.env.PI_SESSION_FILE = metadata.path;
+			execution.env.PI_SESSION_FILE =
+				"path" in metadata && typeof metadata.path === "string" ? metadata.path : undefined;
 			execution.env.PI_PROVIDER = harness.getModel().provider;
 			execution.env.PI_MODEL = harness.getModel().id;
 			execution.env.PI_REASONING_LEVEL = harness.getThinkingLevel();
