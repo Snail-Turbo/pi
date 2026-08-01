@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PiServerError } from "@earendil-works/pi-server";
-import lockfile from "proper-lockfile";
+import lockfile, { type LockOptions } from "proper-lockfile";
 
 const STALE_MS = 30_000;
 const UPDATE_MS = 10_000;
@@ -31,11 +31,29 @@ export class SessionLockManager {
 	}
 
 	async isLocked(sessionId: string): Promise<boolean> {
-		return lockfile.check(await this.ensureTarget(sessionId), { realpath: false, stale: STALE_MS });
+		return lockfile.check(await this.ensureTarget(`session:${sessionId}`), { realpath: false, stale: STALE_MS });
 	}
 
 	async acquire(sessionId: string): Promise<SessionLease> {
-		const target = await this.ensureTarget(sessionId);
+		return this.acquireTarget(`session:${sessionId}`, `Session is locked: ${sessionId}`, 0);
+	}
+
+	async acquireCatalog(): Promise<SessionLease> {
+		return this.acquireTarget("catalog", "Session catalog is locked", {
+			forever: true,
+			factor: 1,
+			minTimeout: 10,
+			maxTimeout: 100,
+			randomize: false,
+		});
+	}
+
+	private async acquireTarget(
+		key: string,
+		lockedMessage: string,
+		retries: NonNullable<LockOptions["retries"]>,
+	): Promise<SessionLease> {
+		const target = await this.ensureTarget(key);
 		let compromised: Error | undefined;
 		const listeners = new Set<(error: Error) => void>();
 		let releaseLock: (() => Promise<void>) | undefined;
@@ -44,7 +62,7 @@ export class SessionLockManager {
 				realpath: false,
 				stale: STALE_MS,
 				update: UPDATE_MS,
-				retries: 0,
+				retries,
 				onCompromised: (error) => {
 					compromised = error;
 					for (const listener of listeners) listener(error);
@@ -52,7 +70,7 @@ export class SessionLockManager {
 			});
 		} catch (error) {
 			if (errorCode(error) === "ELOCKED") {
-				throw new PiServerError("session_locked", `Session is locked: ${sessionId}`);
+				throw new PiServerError("session_locked", lockedMessage);
 			}
 			throw error;
 		}

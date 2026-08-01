@@ -1,4 +1,4 @@
-import type { AgentHarness, ExecutionToolContext, Session } from "@earendil-works/pi-agent-core";
+import { type AgentHarness, type ExecutionToolContext, type Session, toError } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ModelRef, SessionPhase, SessionSnapshot, ThinkingLevel } from "@earendil-works/pi-protocol";
@@ -28,6 +28,12 @@ export interface CreateCodingAgentSessionRuntimeOptions {
 	thinkingLevel: ThinkingLevel;
 	lease: SessionLease;
 	cwd: string;
+}
+
+function throwDisposalErrors(errors: Error[]): void {
+	if (errors.length === 0) return;
+	if (errors.length === 1) throw errors[0];
+	throw new AggregateError(errors, "Session runtime disposal failed");
 }
 
 export class CodingAgentSessionRuntime implements PiSessionRuntime {
@@ -181,16 +187,33 @@ export class CodingAgentSessionRuntime implements PiSessionRuntime {
 		if (this.disposePromise) return this.disposePromise;
 		this.disposed = true;
 		const current = (async () => {
-			try {
-				this.unsubscribeHarness();
-				this.unsubscribeLockCompromise();
-				this.liveTranscript.clear();
-				if (this.getPhase() !== "idle") await this.harness.abort().catch(() => {});
-				await this.harness.waitForIdle().catch(() => {});
-				await this.env.cleanup();
-			} finally {
-				await this.lease.release();
+			this.unsubscribeHarness();
+			this.unsubscribeLockCompromise();
+			this.liveTranscript.clear();
+			const errors: Error[] = [];
+			// Terminal paths already requested harness shutdown; calling abort again would only report invalid_state.
+			if (this.getPhase() !== "idle" && !this.terminalError && !this.lockCompromise) {
+				try {
+					await this.harness.abort();
+				} catch (error) {
+					// Abort can fail through harness hooks. Still verify that active work actually settled before releasing ownership.
+					errors.push(toError(error));
+				}
 			}
+			try {
+				await this.harness.waitForIdle();
+			} catch (error) {
+				errors.push(toError(error));
+				// An unverified shutdown retains the session lease so a retry cannot overlap active work.
+				throwDisposalErrors(errors);
+			}
+			await this.env.cleanup();
+			try {
+				await this.lease.release();
+			} catch (error) {
+				errors.push(toError(error));
+			}
+			throwDisposalErrors(errors);
 		})();
 		this.disposePromise = current;
 		try {

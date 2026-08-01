@@ -6,6 +6,24 @@ import { describe, expect, test } from "vitest";
 import { CodingAgentServerBackend, toPiServerError } from "../../src/server/backend.ts";
 import { createServerBackendFixture, removeServerBackendFixture } from "./fixture.ts";
 
+function deferred(): { promise: Promise<void>; resolve(): void } {
+	let resolve = () => {};
+	const promise = new Promise<void>((resolvePromise) => {
+		resolve = resolvePromise;
+	});
+	return { promise, resolve };
+}
+
+async function settlesBeforeNextTurn(promise: Promise<unknown>): Promise<boolean> {
+	return Promise.race([
+		promise.then(
+			() => true,
+			() => true,
+		),
+		new Promise<boolean>((resolve) => setImmediate(() => resolve(false))),
+	]);
+}
+
 describe("coding-agent server backend", () => {
 	test("normalizes snapshots, restores model/thinking, and holds an exclusive session lock", async () => {
 		const fixture = await createServerBackendFixture();
@@ -100,6 +118,54 @@ describe("coding-agent server backend", () => {
 			await removeServerBackendFixture(fixture);
 		}
 	});
+	test("does not expose sessions until initialization completes", async () => {
+		const fixture = await createServerBackendFixture();
+		const appendStarted = deferred();
+		const releaseAppend = deferred();
+		const sourceStore = createInMemorySessionStore();
+		let blockNextAppend = true;
+		const blockingStore = {
+			create: (options: Parameters<typeof sourceStore.create>[0]) => sourceStore.create(options),
+			load: (metadata: Parameters<typeof sourceStore.load>[0]) => sourceStore.load(metadata),
+			list: (options?: Parameters<typeof sourceStore.list>[0]) => sourceStore.list(options),
+			appendEntry: async (...args: Parameters<typeof sourceStore.appendEntry>) => {
+				if (blockNextAppend) {
+					blockNextAppend = false;
+					appendStarted.resolve();
+					await releaseAppend.promise;
+				}
+				return sourceStore.appendEntry(...args);
+			},
+			delete: (metadata: Parameters<typeof sourceStore.delete>[0]) => sourceStore.delete(metadata),
+			fork: (...args: Parameters<typeof sourceStore.fork>) => sourceStore.fork(...args),
+			[Symbol.asyncDispose]: () => sourceStore[Symbol.asyncDispose](),
+		};
+		const backend = await CodingAgentServerBackend.create({
+			defaultCwd: fixture.cwd,
+			modelRuntime: fixture.modelRuntime,
+			settingsManager: fixture.settingsManager,
+			sessionRepository: createSessionRepository({ store: blockingStore }),
+			createSessionOptions: ({ id }) => ({ id }),
+			lockRoot: join(fixture.root, "initialization-locks"),
+		});
+		let runtime: Awaited<ReturnType<typeof fixture.backend.createSession>> | undefined;
+		try {
+			const creating = backend.createSession({ id: "initializing-session", cwd: fixture.cwd });
+			await appendStarted.promise;
+			const listing = backend.listSessions();
+
+			expect(await settlesBeforeNextTurn(listing)).toBe(false);
+			releaseAppend.resolve();
+			runtime = await creating;
+			expect(await listing).toContainEqual(expect.objectContaining({ id: "initializing-session" }));
+		} finally {
+			releaseAppend.resolve();
+			await runtime?.dispose();
+			await sourceStore[Symbol.asyncDispose]();
+			await removeServerBackendFixture(fixture);
+		}
+	});
+
 	test("builds its system prompt from harness tool metadata", async () => {
 		const fixture = await createServerBackendFixture();
 		const runtime = await fixture.backend.createSession({ id: "server-tool-prompt", cwd: fixture.cwd });

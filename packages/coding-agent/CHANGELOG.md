@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- Fixed server session initialization visibility, malformed tool-result projection, and runtime shutdown failure reporting ([#7396](https://github.com/earendil-works/pi/pull/7396)).
 - Fixed Kitty image previews in fullscreen mode overlapping the sticky editor and footer dock while scrolling.
 - Fixed spaces in `/settings` searches toggling the highlighted setting while typing multi-word queries such as **UI mode** or **Quiet startup**.
 - Fixed custom editors not inheriting the default editor's autocomplete dropdown item limit ([#7333](https://github.com/earendil-works/pi/issues/7333)).

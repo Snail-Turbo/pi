@@ -27,23 +27,26 @@ interface ProjectedToolResult {
 }
 
 function projectToolProgressResult(value: unknown): ProjectedToolResult {
-	if (typeof value !== "object" || value === null) return { content: [] };
+	if (typeof value !== "object" || value === null) throw new TypeError("Tool result must be an object");
 	const source = value as { content?: unknown; details?: unknown; usage?: unknown };
+	if (!Array.isArray(source.content)) throw new TypeError("Tool result content must be an array");
 	const content: ToolTranscriptItem["content"] = [];
-	if (Array.isArray(source.content)) {
-		for (const part of source.content) {
-			if (typeof part !== "object" || part === null || !("type" in part)) continue;
-			const candidate = part as { type?: unknown; text?: unknown; data?: unknown; mimeType?: unknown };
-			if (candidate.type === "text" && typeof candidate.text === "string") {
-				content.push({ type: "text", text: candidate.text });
-			} else if (
-				candidate.type === "image" &&
-				typeof candidate.data === "string" &&
-				typeof candidate.mimeType === "string" &&
-				candidate.mimeType
-			) {
-				content.push({ type: "image", data: candidate.data, mimeType: candidate.mimeType });
+	for (const part of source.content) {
+		if (typeof part !== "object" || part === null || !("type" in part)) {
+			throw new TypeError("Tool result content parts must be typed objects");
+		}
+		const candidate = part as { type?: unknown; text?: unknown; data?: unknown; mimeType?: unknown };
+		if (candidate.type === "text") {
+			if (typeof candidate.text !== "string") throw new TypeError("Tool result text must be a string");
+			content.push({ type: "text", text: candidate.text });
+		} else if (candidate.type === "image") {
+			if (typeof candidate.data !== "string") throw new TypeError("Tool result image data must be a string");
+			if (typeof candidate.mimeType !== "string" || candidate.mimeType.length === 0) {
+				throw new TypeError("Tool result image MIME type must be a non-empty string");
 			}
+			content.push({ type: "image", data: candidate.data, mimeType: candidate.mimeType });
+		} else {
+			throw new TypeError(`Unsupported tool result content type: ${String(candidate.type)}`);
 		}
 	}
 	const details = sanitizeProtocolDetails(source.details);

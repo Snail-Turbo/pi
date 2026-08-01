@@ -1,10 +1,12 @@
 import { join } from "node:path";
+import { AgentHarness } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { TranscriptProgress } from "@earendil-works/pi-protocol";
 import lockfile, { type LockOptions } from "proper-lockfile";
 import { describe, expect, test, vi } from "vitest";
 import { CodingAgentServerBackend } from "../../src/server/backend.ts";
+import { LiveTranscript } from "../../src/server/transcript/live.ts";
 import { abortableResponse, createServerBackendFixture, removeServerBackendFixture } from "./fixture.ts";
 
 describe("coding-agent session runtime", () => {
@@ -70,11 +72,16 @@ describe("coding-agent session runtime", () => {
 		const fixture = await createServerBackendFixture();
 		const realLock = lockfile.lock.bind(lockfile);
 		let releaseAttempts = 0;
+		let lockCalls = 0;
 		const lockSpy = vi.spyOn(lockfile, "lock").mockImplementation(async (file, options) => {
+			lockCalls += 1;
+			const failFirstRelease = lockCalls === 2;
 			const release = await realLock(file, options);
 			return async () => {
-				releaseAttempts += 1;
-				if (releaseAttempts === 1) throw new Error("release failed");
+				if (failFirstRelease) {
+					releaseAttempts += 1;
+					if (releaseAttempts === 1) throw new Error("release failed");
+				}
 				await release();
 			};
 		});
@@ -89,6 +96,86 @@ describe("coding-agent session runtime", () => {
 			await runtime?.dispose();
 			await removeServerBackendFixture(fixture);
 		}
+	});
+	test("reports abort failures after active work settles", async () => {
+		const fixture = await createServerBackendFixture();
+		const runtime = await fixture.backend.createSession({ id: "server-abort-failure", cwd: fixture.cwd });
+		const pendingResponse = abortableResponse();
+		fixture.faux.setResponses([pendingResponse.response]);
+		const prompt = runtime.prompt({ text: "start" });
+		const promptError = prompt.then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		await pendingResponse.started;
+		const originalAbort = AgentHarness.prototype.abort;
+		const abortSpy = vi.spyOn(AgentHarness.prototype, "abort").mockImplementationOnce(async function (
+			this: AgentHarness,
+		) {
+			await originalAbort.call(this);
+			throw new Error("abort reporting failed");
+		});
+		try {
+			await expect(runtime.dispose()).rejects.toThrow("abort reporting failed");
+			expect(await promptError).toMatchObject({ code: "invalid_request" });
+			const secondBackend = await CodingAgentServerBackend.create({
+				defaultCwd: fixture.cwd,
+				sessionRoot: join(fixture.root, "sessions"),
+				modelRuntime: fixture.modelRuntime,
+				settingsManager: fixture.settingsManager,
+			});
+			const reopened = await secondBackend.openSession("server-abort-failure");
+			await reopened.dispose();
+		} finally {
+			abortSpy.mockRestore();
+			await promptError;
+			await runtime.dispose();
+			await removeServerBackendFixture(fixture);
+		}
+	});
+	test("keeps the session lock when harness shutdown cannot be verified", async () => {
+		const fixture = await createServerBackendFixture();
+		const runtime = await fixture.backend.createSession({ id: "server-shutdown-failure", cwd: fixture.cwd });
+		const waitSpy = vi.spyOn(AgentHarness.prototype, "waitForIdle").mockRejectedValueOnce(new Error("wait failed"));
+		try {
+			await expect(runtime.dispose()).rejects.toThrow("wait failed");
+			waitSpy.mockRestore();
+			const secondBackend = await CodingAgentServerBackend.create({
+				defaultCwd: fixture.cwd,
+				sessionRoot: join(fixture.root, "sessions"),
+				modelRuntime: fixture.modelRuntime,
+				settingsManager: fixture.settingsManager,
+			});
+			await expect(secondBackend.openSession("server-shutdown-failure")).rejects.toMatchObject({
+				code: "session_locked",
+			});
+			await expect(runtime.dispose()).resolves.toBeUndefined();
+		} finally {
+			waitSpy.mockRestore();
+			await runtime.dispose();
+			await removeServerBackendFixture(fixture);
+		}
+	});
+	test("rejects malformed partial and final tool results", () => {
+		const transcript = new LiveTranscript(() => {});
+		expect(() =>
+			transcript.handle({
+				type: "tool_execution_update",
+				toolCallId: "call",
+				toolName: "read",
+				args: {},
+				partialResult: { content: [{ type: "text", text: 42 }] },
+			}),
+		).toThrow(TypeError);
+		expect(() =>
+			transcript.handle({
+				type: "tool_execution_end",
+				toolCallId: "call",
+				toolName: "read",
+				result: { details: {} },
+				isError: false,
+			}),
+		).toThrow(TypeError);
 	});
 	test("exposes accepted steering text to every session snapshot", async () => {
 		const fixture = await createServerBackendFixture();

@@ -142,34 +142,39 @@ export class CodingAgentServerBackend<
 	}
 
 	async listSessions(): Promise<SessionSummary[]> {
-		const stored = await this.sessions.list();
-		return Promise.all(
-			stored.map(async (metadata) => {
-				try {
-					const session = await this.sessions.open(metadata);
-					const { state, createdAt } = await inspectServerSession(session);
-					if (!state.cwd) throw new Error("stored session has no cwd");
-					if (!state.model) throw new Error("stored session has no model");
-					if (state.invalidThinkingLevel !== undefined) {
-						throw new Error(`stored session has invalid thinking level: ${state.invalidThinkingLevel}`);
+		const catalogLease = await this.locks.acquireCatalog();
+		try {
+			const stored = await this.sessions.list();
+			return await Promise.all(
+				stored.map(async (metadata) => {
+					try {
+						const session = await this.sessions.open(metadata);
+						const { state, createdAt } = await inspectServerSession(session);
+						if (!state.cwd) throw new Error("stored session has no cwd");
+						if (!state.model) throw new Error("stored session has no model");
+						if (state.invalidThinkingLevel !== undefined) {
+							throw new Error(`stored session has invalid thinking level: ${state.invalidThinkingLevel}`);
+						}
+						return {
+							id: metadata.id,
+							name: state.name,
+							cwd: state.cwd,
+							createdAt,
+							updatedAt: state.updatedAt,
+							phase: "idle" as const,
+							model: state.model,
+							thinkingLevel: state.thinkingLevel ?? "off",
+							attached: false,
+							locked: await this.locks.isLocked(metadata.id),
+						};
+					} catch (error) {
+						throw new Error(`Failed to read coding-agent session ${metadata.id}`, { cause: error });
 					}
-					return {
-						id: metadata.id,
-						name: state.name,
-						cwd: state.cwd,
-						createdAt,
-						updatedAt: state.updatedAt,
-						phase: "idle" as const,
-						model: state.model,
-						thinkingLevel: state.thinkingLevel ?? "off",
-						attached: false,
-						locked: await this.locks.isLocked(metadata.id),
-					};
-				} catch (error) {
-					throw new Error(`Failed to read coding-agent session ${metadata.id}`, { cause: error });
-				}
-			}),
-		);
+				}),
+			);
+		} finally {
+			await catalogLease.release();
+		}
 	}
 
 	async createSession(options: CreateSessionOptions): Promise<PiSessionRuntime> {
@@ -177,9 +182,12 @@ export class CodingAgentServerBackend<
 		await validateCwd(cwd);
 		const model = await this.modelResolver.resolve(options.model);
 		const thinkingLevel = this.modelResolver.resolveThinkingLevel(model, options.thinkingLevel);
-		const lease = await this.locks.acquire(options.id);
+		const catalogLease = await this.locks.acquireCatalog();
+		let lease: SessionLease | undefined;
 		let session: Session<TMetadata> | undefined;
+		let runtime: CodingAgentSessionRuntime | undefined;
 		try {
+			lease = await this.locks.acquire(options.id);
 			if ((await this.sessions.list()).some((metadata) => metadata.id === options.id)) {
 				throw new PiServerError("invalid_request", `Session already exists: ${options.id}`);
 			}
@@ -188,9 +196,18 @@ export class CodingAgentServerBackend<
 			await session.appendModelChange(model.provider, model.id);
 			await session.appendThinkingLevelChange(thinkingLevel);
 			if (options.name !== undefined) await session.appendSessionName(options.name);
-			return await this.createRuntime(session, model, thinkingLevel, lease, cwd);
+			runtime = await this.createRuntime(session, model, thinkingLevel, lease, cwd);
+			await catalogLease.release();
+			return runtime;
 		} catch (error) {
 			const cleanupErrors: unknown[] = [];
+			if (runtime) {
+				try {
+					await runtime.dispose();
+				} catch (cleanupError) {
+					cleanupErrors.push(cleanupError);
+				}
+			}
 			if (session) {
 				try {
 					await this.sessions.delete(await session.getMetadata());
@@ -198,8 +215,15 @@ export class CodingAgentServerBackend<
 					cleanupErrors.push(cleanupError);
 				}
 			}
+			if (lease) {
+				try {
+					await lease.release();
+				} catch (cleanupError) {
+					cleanupErrors.push(cleanupError);
+				}
+			}
 			try {
-				await lease.release();
+				await catalogLease.release();
 			} catch (cleanupError) {
 				cleanupErrors.push(cleanupError);
 			}
