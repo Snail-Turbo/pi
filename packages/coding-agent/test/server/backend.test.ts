@@ -1,6 +1,12 @@
 import { rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createInMemorySessionStore, createReadTool, createSessionRepository } from "@earendil-works/pi-agent-core";
+import {
+	createReadTool,
+	type InMemorySessionCreateOptions,
+	InMemorySessionRepository,
+	type SessionMetadata,
+	type SessionRepository,
+} from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { TranscriptProgress } from "@earendil-works/pi-protocol";
 import { describe, expect, test } from "vitest";
@@ -123,29 +129,33 @@ describe("coding-agent server backend", () => {
 		const fixture = await createServerBackendFixture();
 		const appendStarted = deferred();
 		const releaseAppend = deferred();
-		const sourceStore = createInMemorySessionStore();
+		const sourceRepository = new InMemorySessionRepository();
 		let blockNextAppend = true;
-		const blockingStore = {
-			create: (options: Parameters<typeof sourceStore.create>[0]) => sourceStore.create(options),
-			load: (metadata: Parameters<typeof sourceStore.load>[0]) => sourceStore.load(metadata),
-			list: (options?: Parameters<typeof sourceStore.list>[0]) => sourceStore.list(options),
-			appendEntry: async (...args: Parameters<typeof sourceStore.appendEntry>) => {
-				if (blockNextAppend) {
-					blockNextAppend = false;
-					appendStarted.resolve();
-					await releaseAppend.promise;
-				}
-				return sourceStore.appendEntry(...args);
+		const blockingRepository: SessionRepository<SessionMetadata, InMemorySessionCreateOptions> = {
+			async create(options) {
+				const session = await sourceRepository.create(options);
+				const appendCustomEntry = session.appendCustomEntry.bind(session);
+				session.appendCustomEntry = async (...args) => {
+					if (blockNextAppend) {
+						blockNextAppend = false;
+						appendStarted.resolve();
+						await releaseAppend.promise;
+					}
+					return appendCustomEntry(...args);
+				};
+				return session;
 			},
-			delete: (metadata: Parameters<typeof sourceStore.delete>[0]) => sourceStore.delete(metadata),
-			fork: (...args: Parameters<typeof sourceStore.fork>) => sourceStore.fork(...args),
-			[Symbol.asyncDispose]: () => sourceStore[Symbol.asyncDispose](),
+			open: (metadata) => sourceRepository.open(metadata),
+			list: () => sourceRepository.list(),
+			delete: (metadata) => sourceRepository.delete(metadata),
+			fork: (source, options) => sourceRepository.fork(source, options),
+			[Symbol.asyncDispose]: () => sourceRepository[Symbol.asyncDispose](),
 		};
 		const backend = await CodingAgentServerBackend.create({
 			defaultCwd: fixture.cwd,
 			modelRuntime: fixture.modelRuntime,
 			settingsManager: fixture.settingsManager,
-			sessionRepository: createSessionRepository({ store: blockingStore }),
+			sessionRepository: blockingRepository,
 			createSessionOptions: ({ id }) => ({ id }),
 			lockRoot: join(fixture.root, "initialization-locks"),
 		});
@@ -162,7 +172,7 @@ describe("coding-agent server backend", () => {
 		} finally {
 			releaseAppend.resolve();
 			await runtime?.dispose();
-			await sourceStore[Symbol.asyncDispose]();
+			await sourceRepository[Symbol.asyncDispose]();
 			await removeServerBackendFixture(fixture);
 		}
 	});
@@ -194,7 +204,7 @@ describe("coding-agent server backend", () => {
 
 	test("uses an injected SessionRepository without depending on storage metadata", async () => {
 		const fixture = await createServerBackendFixture();
-		const sessionRepository = createSessionRepository({ store: createInMemorySessionStore() });
+		const sessionRepository = new InMemorySessionRepository();
 		const backend = await CodingAgentServerBackend.create({
 			defaultCwd: fixture.cwd,
 			modelRuntime: fixture.modelRuntime,
@@ -216,6 +226,7 @@ describe("coding-agent server backend", () => {
 			expect(await runtime.snapshot()).toMatchObject({ id: "memory-session", cwd: fixture.cwd });
 		} finally {
 			await runtime.dispose();
+			await sessionRepository[Symbol.asyncDispose]();
 			await removeServerBackendFixture(fixture);
 		}
 	});
@@ -251,7 +262,7 @@ describe("coding-agent server backend", () => {
 
 	test("removes inherited PI_SESSION_FILE for non-file-backed sessions", async () => {
 		const fixture = await createServerBackendFixture();
-		const sessionRepository = createSessionRepository({ store: createInMemorySessionStore() });
+		const sessionRepository = new InMemorySessionRepository();
 		const backend = await CodingAgentServerBackend.create({
 			defaultCwd: fixture.cwd,
 			modelRuntime: fixture.modelRuntime,
@@ -282,6 +293,7 @@ describe("coding-agent server backend", () => {
 			await runtime.dispose();
 			if (previousSessionFile === undefined) delete process.env.PI_SESSION_FILE;
 			else process.env.PI_SESSION_FILE = previousSessionFile;
+			await sessionRepository[Symbol.asyncDispose]();
 			await removeServerBackendFixture(fixture);
 		}
 	});

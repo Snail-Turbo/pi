@@ -1,10 +1,9 @@
 import { isAbsolute, join, resolve } from "node:path";
 import {
-	createJsonlSessionStore,
-	createSessionRepository,
 	type JsonlSessionCreateOptions,
 	type JsonlSessionListOptions,
 	type JsonlSessionMetadata,
+	JsonlSessionRepository,
 	type Session,
 	type SessionCreateOptions,
 	type SessionMetadata,
@@ -118,8 +117,9 @@ export class CodingAgentServerBackend<
 		}
 
 		const sessionRoot = resolve(options.sessionRoot ?? join(agentDir, DEFAULT_SESSION_ROOT_NAME));
-		const sessions = createSessionRepository({
-			store: createJsonlSessionStore({ fs: new NodeExecutionEnv({ cwd: defaultCwd }), sessionsRoot: sessionRoot }),
+		const sessions = new JsonlSessionRepository({
+			fs: new NodeExecutionEnv({ cwd: defaultCwd }),
+			sessionsRoot: sessionRoot,
 		});
 		const backend = new CodingAgentServerBackend({
 			modelRuntime,
