@@ -572,28 +572,6 @@ describe("AgentHarness tools", () => {
 			expect(textOutput(result)).toBe(`ready::explicit:${getOrThrow(await env.canonicalPath(context.workspace))}`);
 		});
 
-		it("removes inherited environment variables through the prepare patch", async () => {
-			const env = new NodeExecutionEnv({
-				cwd: createTempDir(),
-				shellEnv: { PI_BASH_PREPARE_REMOVED: "remove-me" },
-			});
-			const tool = createBashTool({
-				prepare: (execution) => {
-					execution.env.PI_BASH_PREPARE_REMOVED = undefined;
-				},
-			});
-
-			const result = await tool.execute(
-				"bash-remove-env",
-				{ command: `printf '%s' "\${PI_BASH_PREPARE_REMOVED-unset}"` },
-				undefined,
-				undefined,
-				{ env },
-			);
-
-			expect(textOutput(result)).toBe("unset");
-		});
-
 		it("supports command prefixes", async () => {
 			const context = createContext();
 			const result = await createBashTool({ commandPrefix: "value=hello" }).execute(

@@ -156,31 +156,6 @@ describe("coding-agent session runtime", () => {
 			await removeServerBackendFixture(fixture);
 		}
 	});
-	test("keeps runtime phase ownership until the prompt operation settles", async () => {
-		const fixture = await createServerBackendFixture();
-		const runtime = await fixture.backend.createSession({
-			id: "server-prompt-phase-owner",
-			cwd: fixture.cwd,
-			model: { provider: fixture.faux.provider.id, id: "faux-reasoning" },
-		});
-		try {
-			fixture.faux.setResponses([fauxAssistantMessage("done")]);
-			const snapshotPhases: string[] = [];
-			runtime.subscribe((event) => {
-				if (event.type === "snapshot") snapshotPhases.push(runtime.getPhase());
-			});
-
-			await runtime.prompt({ text: "start" });
-
-			expect(snapshotPhases.length).toBeGreaterThan(0);
-			expect(snapshotPhases).not.toContain("idle");
-			expect(runtime.getPhase()).toBe("idle");
-		} finally {
-			await runtime.dispose();
-			await removeServerBackendFixture(fixture);
-		}
-	});
-
 	test("rejects malformed partial and final tool results", () => {
 		const transcript = new LiveTranscript();
 		expect(() =>

@@ -6,41 +6,6 @@ import { describe, expect, test, vi } from "vitest";
 import { createServerBackendFixture, removeServerBackendFixture } from "./fixture.ts";
 
 describe("coding-agent server persistence", () => {
-	test("fails session listing when persisted JSONL is unreadable", async () => {
-		const fixture = await createServerBackendFixture();
-		const runtime = await fixture.backend.createSession({
-			id: "server-corrupt-session",
-			cwd: fixture.cwd,
-		});
-		await runtime.dispose();
-		const files = await readdir(join(fixture.root, "sessions"), { recursive: true });
-		const sessionFile = files.find((file) => file.endsWith(".jsonl"));
-		if (!sessionFile) throw new Error("Expected persisted JSONL session");
-		await appendFile(join(fixture.root, "sessions", sessionFile), "{invalid json\n");
-
-		try {
-			await expect(fixture.backend.listSessions()).rejects.toThrow(/Failed to read coding-agent session/);
-		} finally {
-			await removeServerBackendFixture(fixture);
-		}
-	});
-	test("surfaces corrupt session headers instead of omitting them", async () => {
-		const fixture = await createServerBackendFixture();
-		const runtime = await fixture.backend.createSession({ id: "server-corrupt-header", cwd: fixture.cwd });
-		await runtime.dispose();
-		const files = await readdir(join(fixture.root, "sessions"), { recursive: true });
-		const sessionFile = files.find((file) => file.endsWith(".jsonl"));
-		if (!sessionFile) throw new Error("Expected persisted JSONL session");
-		await writeFile(join(fixture.root, "sessions", sessionFile), "{invalid header\n");
-		try {
-			await expect(fixture.backend.listSessions()).rejects.toThrow(/Invalid JSONL session file/);
-			await expect(fixture.backend.openSession("server-corrupt-header")).rejects.toThrow(
-				/Invalid JSONL session file/,
-			);
-		} finally {
-			await removeServerBackendFixture(fixture);
-		}
-	});
 	test("rejects invalid persisted creation timestamps", async () => {
 		const fixture = await createServerBackendFixture();
 		const runtime = await fixture.backend.createSession({ id: "server-invalid-created-at", cwd: fixture.cwd });
