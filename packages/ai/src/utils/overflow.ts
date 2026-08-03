@@ -10,7 +10,9 @@ import type { AssistantMessage } from "../types.ts";
  *
  * - Anthropic: "prompt is too long: 213462 tokens > 200000 maximum"
  * - Anthropic: "413 {\"error\":{\"type\":\"request_too_large\",\"message\":\"Request exceeds the maximum size\"}}"
- * - OpenAI: "Your input exceeds the context window of this model"
+ * - OpenAI: "Your input exceeds the context window of this model", or Responses status
+ *   "incomplete" (mapped to stopReason "length") with non-zero reasoning output when the prompt
+ *   fills the context window
  * - OpenAI/LiteLLM: "Requested token count exceeds the model's maximum context length of 131072 tokens"
  * - OpenAI-compatible: "Input length (265330) exceeds model's maximum context length (262144)."
  * - Google: "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)"
@@ -80,11 +82,14 @@ const NON_OVERFLOW_PATTERNS = [
 /**
  * Check if an assistant message represents a context overflow error.
  *
- * This handles two cases:
+ * This handles three cases:
  * 1. Error-based overflow: Most providers return stopReason "error" with a
  *    specific error message pattern.
  * 2. Silent overflow: Some providers accept overflow requests and return
  *    successfully. For these, we check if usage.input exceeds the context window.
+ * 3. Length-stop overflow: Xiaomi MiMo can return "length" with zero output, while
+ *    OpenAI can return "incomplete" (mapped to "length") with non-zero reasoning output
+ *    when the prompt fills the context window.
  *
  * ## Reliability by Provider
  *
@@ -126,7 +131,7 @@ const NON_OVERFLOW_PATTERNS = [
  *    check the errorMessage yourself before calling this function
  *
  * @param message - The assistant message to check
- * @param contextWindow - Optional context window size for detecting silent overflow (z.ai)
+ * @param contextWindow - Optional context window size for detecting silent and length-stop overflow
  * @returns true if the message indicates a context overflow
  */
 export function isContextOverflow(message: AssistantMessage, contextWindow?: number): boolean {
@@ -147,12 +152,12 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
 		}
 	}
 
-	// Case 3: Length-stop overflow (Xiaomi MiMo style) - server truncates oversized input
-	// to fit the context window, leaving no room for output. Returns stopReason "length"
-	// with output=0 and input+cacheRead filling the context window.
-	if (contextWindow && message.stopReason === "length" && message.usage.output === 0) {
-		const inputTokens = message.usage.input + message.usage.cacheRead;
-		if (inputTokens >= contextWindow * 0.99) {
+	// Case 3: Length-stop overflow. Xiaomi MiMo truncates input to fill the context window and
+	// returns "length" with zero output tokens. OpenAI can return "incomplete", mapped to "length",
+	// with non-zero output because it emitted reasoning tokens before running out of context.
+	if (contextWindow && message.stopReason === "length") {
+		const promptTokens = message.usage.input + message.usage.cacheRead + message.usage.cacheWrite;
+		if (promptTokens >= contextWindow * 0.99) {
 			return true;
 		}
 	}

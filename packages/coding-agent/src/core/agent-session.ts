@@ -2184,7 +2184,11 @@ export class AgentSession {
 			if (willRetry) {
 				const messages = this.agent.state.messages;
 				const lastMsg = messages[messages.length - 1];
-				if (lastMsg?.role === "assistant" && (lastMsg as AssistantMessage).stopReason === "error") {
+				// The overflow response was persisted on message_end before _checkCompaction() removed it
+				// from agent state. Rebuilding state from the new compaction can restore that kept entry,
+				// leaving an assistant as the final message. agent.continue() rejects that state, so remove
+				// the retriable error or truncated-length response again before continuing the interrupted turn.
+				if (lastMsg?.role === "assistant" && (lastMsg.stopReason === "error" || lastMsg.stopReason === "length")) {
 					this.agent.state.messages = messages.slice(0, -1);
 				}
 				return true;
