@@ -387,7 +387,8 @@ export class InteractiveMode {
 	private autocompleteProvider: AutocompleteProvider | undefined;
 	private autocompleteProviderWrappers: AutocompleteProviderFactory[] = [];
 	private fdPath: string | undefined;
-	private editorContainer: Container;
+	// VStack so tall children (e.g. the extension confirm selector with a large diff) get a constrained height and can scroll internally.
+	private editorContainer: TuiLayouts.VStack;
 	private activeSelectorToken?: object;
 	private activeSelectorDispose?: () => void;
 	private footer: FooterComponent;
@@ -544,8 +545,8 @@ export class InteractiveMode {
 			autocompleteMaxVisible,
 		});
 		this.editor = this.defaultEditor;
-		this.editorContainer = new Container();
-		this.editorContainer.addChild(this.editor as Component);
+		this.editorContainer = new TuiLayouts.VStack();
+		this.editorContainer.addChild(this.editor as Component, { shrink: 1, minSize: 1 });
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);

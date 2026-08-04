@@ -39,6 +39,8 @@ export interface Keybindings {
 	"tui.select.pageDown": true;
 	"tui.select.confirm": true;
 	"tui.select.cancel": true;
+	"tui.select.scrollUp": true;
+	"tui.select.scrollDown": true;
 	// Alternate-screen viewport navigation
 	"tui.altScreen.pageUp": true;
 	"tui.altScreen.pageDown": true;
@@ -138,6 +140,8 @@ export const TUI_KEYBINDINGS = {
 		defaultKeys: ["escape", "ctrl+c"],
 		description: "Cancel selection",
 	},
+	"tui.select.scrollUp": { defaultKeys: "[", description: "Scroll selection content up" },
+	"tui.select.scrollDown": { defaultKeys: "]", description: "Scroll selection content down" },
 	"tui.altScreen.pageUp": {
 		defaultKeys: "pageUp",
 		description: "Scroll viewport up one page",
